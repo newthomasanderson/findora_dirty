@@ -1,0 +1,102 @@
+########################### 
+# Steps for Linux. Tested with Ubuntu 20.04
+# YOU PERFORM THESE STEPS ON YOUR OWN RISK AND AUTHOR MAKES NO EXPRESS OR IMPLIED WARRANTY OF ANY KIND!
+# author assumes you have all files as for node for stage1
+#
+# Install docker if you do not have one(optional step)
+curl -fsSL https://get.docker.com -o get-docker.sh
+sudo sh get-docker.sh
+
+# Kill tendermint and node validator processes:
+killall tendermint
+killall abci_validator_node
+
+
+#Download the following files and pull image:
+#findorad: the node of findora network.
+
+sudo docker pull public.ecr.aws/k6m5b6e2/release/findorad:latest
+
+wget -c https://github.com/FindoraNetwork/testnet-downloads/releases/download/Linux-03/fns
+sudo cp fns /usr/local/bin/
+
+#Set Environment Path Variables
+export ROOT_DIR=${HOME}/findora_testnet
+
+
+
+# Clear old data
+rm -rf ${ROOT_DIR}/abci
+rm -rf ${ROOT_DIR}/tendermint
+rm -rf ${HOME}/.tendermint/data/blockstore.db
+rm -rf ${HOME}/.tendermint/data/cs.wal
+rm -rf ${HOME}/.tendermint/data/evidence.db
+rm -rf ${HOME}/.tendermint/data/state.db
+rm -rf ${HOME}/.tendermint/data/tx_index.db
+
+cat << EOF > ${HOME}/.tendermint/data/priv_validator_state.json
+{
+  "height": "0",
+  "round": "0",
+  "step": 0
+}
+EOF
+
+#Create ledger data directory
+mkdir -p ${ROOT_DIR}/findorad
+
+# Initialize the configuration of your Tendermint node
+sudo docker run --rm -v $HOME/.tendermint:/root/.tendermint public.ecr.aws/k6m5b6e2/release/findorad init --test-net
+
+#Generate a new, random pair of public and private keys for your node which will be used for FRA staking:
+fns genkey > ${ROOT_DIR}/tmp.gen.keypair
+
+#Configure your validator node to use your newly generated public and private keys
+
+fns setup -S https://prod-testnet.prod.findora.org
+
+fns setup -O ${ROOT_DIR}/node.mnemonic
+
+
+fns setup -K ${HOME}/.tendermint/config/priv_validator_key.json
+
+#Start your validator container
+sudo docker run -d \
+    -v $HOME/.tendermint:/root/.tendermint \
+    -v $ROOT_DIR/findorad:/tmp/findora \
+    -p 8669:8669 \
+    -p 8668:8668 \
+    -p 8667:8667 \
+    -p 26657:26657 \
+    --name findorad \
+    public.ecr.aws/k6m5b6e2/release/findorad node \
+    --ledger-dir /tmp/findora \
+    --tendermint-host 0.0.0.0 \
+    --tendermint-node-key-config-path="/root/.tendermint/config/priv_validator_key.json" \
+    --enable-ledger-service \
+    --enable-query-service
+    
+#Waiting to node become synced
+
+curl 'http://localhost:26657/status'
+    
+#check output fro lines "catching_up": false
+    
+#Create memo file
+    
+cat << EOF > ${HOME}/staker_memo
+{
+  "name": "ExampleNode",
+  "desc": "I am just a example description, please change me.",
+  "website": "https://www.example.com",
+  "logo": "https://www.example.com/logo"
+}
+EOF
+
+#Make initial assets stake with some FRA
+fns stake -n $((999999 * 1000000)) -R 0.02 -M "$(cat ${HOME}/staker_memo)"
+
+
+
+    
+    
